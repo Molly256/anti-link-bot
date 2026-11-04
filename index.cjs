@@ -1,7 +1,7 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } from '@whiskeysockets/baileys'
-import pino from 'pino'
-import qrcode from 'qrcode-terminal'
-import http from 'http'
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys')
+const pino = require('pino')
+const qrcode = require('qrcode-terminal')
+const http = require('http')
 
 http.createServer((req,res)=>res.end('Bot is running')).listen(process.env.PORT || 3000)
 

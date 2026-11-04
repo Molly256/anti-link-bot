@@ -1,9 +1,10 @@
 {
   "name": "whatsapp-anti-link-bot",
   "version": "2.0.0",
-  "main": "index.js",
-  "type": "module",
-  "scripts": { "start": "node index.js" },
+  "main": "index.cjs",
+  "scripts": {
+    "start": "node index.cjs"
+  },
   "dependencies": {
     "@whiskeysockets/baileys": "6.7.18",
     "qrcode-terminal": "^0.12.0",
