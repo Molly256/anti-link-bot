@@ -3,7 +3,6 @@
   "version": "2.0.0",
   "description": "Deletes links + limits photos to 2 + warns x2 then kicks",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
