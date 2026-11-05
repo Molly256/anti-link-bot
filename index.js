@@ -6,7 +6,7 @@ import fs from 'fs'
 const PORT = process.env.PORT || 3000
 http.createServer((req,res)=>{res.writeHead(200);res.end('Bot active!')}).listen(PORT,'0.0.0.0',()=>console.log(`✅ Port ${PORT}`))
 
-const PHONE_NUMBER = process.env.BOT_NUMBER
+const PHONE_NUMBER = process.env.BOT_NUMBER || '254726168955'
 const MAX_IMAGES_PER_DAY = 2
 const warns = {}
 const getToday = () => new Date().toISOString().split('T')[0]
@@ -18,6 +18,7 @@ function getUserData(g,u){
 }
 
 let isStarting = false
+let codeInterval = null
 
 async function startBot(){
   if(isStarting) return
@@ -35,33 +36,36 @@ async function startBot(){
   })
   sock.ev.on('creds.update', saveCreds)
 
+  // ✅ FIXED: New code every 25 seconds until you pair
   if(!sock.authState.creds.registered){
-    setTimeout(async()=>{
+    const askCode = async()=>{
       try{
         const code = await sock.requestPairingCode(PHONE_NUMBER)
-        console.log(`\n🔑 CODE: ${code}\n`)
-      }catch(e){console.log(e)}
-    }, 6000)
+        console.log(`\n🔑 NEW CODE: ${code} - TYPE FAST!\n`)
+      }catch(e){ console.log('code retry...') }
+    }
+    setTimeout(askCode, 6000)
+    codeInterval = setInterval(askCode, 25000)
   }
 
   sock.ev.on('connection.update', async (u)=>{
     const { connection, lastDisconnect } = u
     if(connection === 'open'){
       console.log('✅ Bot online!')
+      if(codeInterval) clearInterval(codeInterval)
       isStarting = false
     }
     if(connection === 'close'){
       const code = lastDisconnect?.error?.output?.statusCode
       console.log('Closed:', code)
+      if(codeInterval) clearInterval(codeInterval)
       isStarting = false
-      // 401 = logged out / conflict - DO NOT loop forever
       if(code === DisconnectReason.loggedOut){
-        console.log('❌ Logged out - delete auth folder on Render and re-pair')
-        // delete auth
+        console.log('❌ Logged out - re-pair needed')
         try{ fs.rmSync('auth',{recursive:true,force:true}) }catch{}
-        return // stop, user must re-pair
+        setTimeout(startBot, 5000)
+        return
       }
-      // For conflict / restart, wait 10s and restart ONCE
       console.log('Reconnecting in 10s...')
       setTimeout(startBot, 10000)
     }
@@ -73,7 +77,7 @@ async function startBot(){
         if(!msg.message || msg.key.fromMe) continue
         const from = msg.key.remoteJid
         if(!from?.endsWith('@g.us')) continue
-        const sender = msg.key.participant
+        const sender = msg.key.participant || msg.key.participantAlt
         if(!sender) continue
         const groupMetadata = await sock.groupMetadata(from)
         const participants = groupMetadata.participants
