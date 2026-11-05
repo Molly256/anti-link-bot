@@ -6,7 +6,7 @@ import fs from 'fs'
 const PORT = process.env.PORT || 3000
 http.createServer((req,res)=>{res.writeHead(200);res.end('Bot active!')}).listen(PORT,'0.0.0.0',()=>console.log(`✅ Port ${PORT}`))
 
-const PHONE_NUMBER = process.env.BOT_NUMBER || '254726168955'
+const PHONE_NUMBER = process.env.BOT_NUMBER || '256726168955'
 const MAX_IMAGES_PER_DAY = 2
 const warns = {}
 const getToday = () => new Date().toISOString().split('T')[0]
