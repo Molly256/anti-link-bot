@@ -2,11 +2,21 @@ import makeWASocket, { useMultiFileAuthState, makeCacheableSignalKeyStore, fetch
 import pino from 'pino'
 import http from 'http'
 import fs from 'fs'
+import QRCode from 'qrcode'
 
 const PORT = process.env.PORT || 3000
-http.createServer((req,res)=>{res.writeHead(200);res.end('Bot active!')}).listen(PORT,'0.0.0.0',()=>console.log(`✅ Port ${PORT}`))
+let lastQR = null
 
-const PHONE_NUMBER = process.env.BOT_NUMBER || '256726168955'
+http.createServer(async (req,res)=>{
+  if(lastQR){
+    const qrImage = await QRCode.toDataURL(lastQR)
+    res.writeHead(200, {'Content-Type':'text/html'})
+    res.end(`<h1>Scan this with your 256 phone</h1><img src="${qrImage}" style="width:300px"><p>Refresh if expired</p>`)
+  } else {
+    res.writeHead(200); res.end('Bot starting... waiting for QR, refresh in 5 sec')
+  }
+}).listen(PORT,'0.0.0.0',()=>console.log(`✅ Port ${PORT}`))
+
 const MAX_IMAGES_PER_DAY = 2
 const warns = {}
 const getToday = () => new Date().toISOString().split('T')[0]
@@ -35,21 +45,15 @@ async function startBot(){
   })
   sock.ev.on('creds.update', saveCreds)
 
-  // ONE CODE ONLY - stays valid for 2 mins
-  if(!sock.authState.creds.registered){
-    const askCode = async()=>{
-      try{
-        const code = await sock.requestPairingCode(PHONE_NUMBER)
-        console.log(`\n🔑 NEW CODE FOR ${PHONE_NUMBER}: ${code}\nType it now, you have 2 mins!\n`)
-      }catch(e){ console.log('code retry...', e.message) }
-    }
-    setTimeout(askCode, 6000)
-  }
-
   sock.ev.on('connection.update', async (u)=>{
-    const { connection, lastDisconnect } = u
+    const { connection, lastDisconnect, qr } = u
+    if(qr){
+      lastQR = qr
+      console.log('📱 NEW QR - open your Render URL to scan!')
+    }
     if(connection === 'open'){
       console.log('✅ Bot online! ✅')
+      lastQR = null
       isStarting = false
     }
     if(connection === 'close'){
@@ -57,7 +61,6 @@ async function startBot(){
       console.log('Closed:', code)
       isStarting = false
       if(code === DisconnectReason.loggedOut){
-        console.log('❌ Logged out - re-pair needed')
         try{ fs.rmSync('auth',{recursive:true,force:true}) }catch{}
         setTimeout(startBot, 5000)
         return
