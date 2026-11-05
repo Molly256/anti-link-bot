@@ -20,7 +20,7 @@ async function startBot() {
   
   const { state, saveCreds } = await useMultiFileAuthState('auth')
   
-  const sock = makeWASocket.default({
+  const sock = makeWASocket({
     version,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })) },
     logger: pino({ level: 'silent' }),
