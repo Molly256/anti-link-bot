@@ -18,7 +18,6 @@ function getUserData(g,u){
 }
 
 let isStarting = false
-let codeInterval = null
 
 async function startBot(){
   if(isStarting) return
@@ -36,29 +35,26 @@ async function startBot(){
   })
   sock.ev.on('creds.update', saveCreds)
 
-  // ✅ FIXED: New code every 25 seconds until you pair
+  // ONE CODE ONLY - stays valid for 2 mins
   if(!sock.authState.creds.registered){
     const askCode = async()=>{
       try{
         const code = await sock.requestPairingCode(PHONE_NUMBER)
-        console.log(`\n🔑 NEW CODE: ${code} - TYPE FAST!\n`)
-      }catch(e){ console.log('code retry...') }
+        console.log(`\n🔑 NEW CODE FOR ${PHONE_NUMBER}: ${code}\nType it now, you have 2 mins!\n`)
+      }catch(e){ console.log('code retry...', e.message) }
     }
     setTimeout(askCode, 6000)
-    codeInterval = setInterval(askCode, 25000)
   }
 
   sock.ev.on('connection.update', async (u)=>{
     const { connection, lastDisconnect } = u
     if(connection === 'open'){
-      console.log('✅ Bot online!')
-      if(codeInterval) clearInterval(codeInterval)
+      console.log('✅ Bot online! ✅')
       isStarting = false
     }
     if(connection === 'close'){
       const code = lastDisconnect?.error?.output?.statusCode
       console.log('Closed:', code)
-      if(codeInterval) clearInterval(codeInterval)
       isStarting = false
       if(code === DisconnectReason.loggedOut){
         console.log('❌ Logged out - re-pair needed')
@@ -66,7 +62,6 @@ async function startBot(){
         setTimeout(startBot, 5000)
         return
       }
-      console.log('Reconnecting in 10s...')
       setTimeout(startBot, 10000)
     }
   })
