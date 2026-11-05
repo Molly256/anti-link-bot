@@ -79,16 +79,19 @@ async function startBot(){
         if(!sender) continue
         const groupMetadata = await sock.groupMetadata(from)
         const participants = groupMetadata.participants
-        const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net'
-        const isSenderAdmin = participants.some(p=>p.id===sender && p.admin)
-        const isBotAdmin = participants.some(p=>(p.id===botJid || p.id===sock.user.id) && p.admin)
+
+        // FIXED: LID-proof admin check
+        const botNumber = sock.user.id.split(':')[0].split('@')[0]
+        const isBotAdmin = participants.some(p => p.id.includes(botNumber) && p.admin)
+        const isSenderAdmin = participants.some(p => (p.id === sender || p.id.includes(sender.split('@')[0])) && p.admin)
         if(isSenderAdmin || !isBotAdmin) continue
 
         const userData = getUserData(from, sender)
         const mention = `@${sender.split('@')[0]}`
         const body = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || ""
 
-        const linkRegex = /(https?:\/\/|www\.|chat\.whatsapp\.com|t\.me|wa\.me)/i
+        // FIXED: catches riotplatform.com even without https://
+        const linkRegex = /(https?:\/\/|www\.|chat\.whatsapp\.com|t\.me|wa\.me|\.com|\.net|\.org|\.io|\.co|\.link|\.xyz)/i
         if(linkRegex.test(body)){
           await sock.sendMessage(from, { delete: msg.key })
           userData.linkWarns++
