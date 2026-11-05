@@ -2,24 +2,34 @@ import makeWASocket, { useMultiFileAuthState, makeCacheableSignalKeyStore, fetch
 import pino from 'pino'
 import http from 'http'
 
-// 1. RENDER HEALTH CHECK SERVER
 const PORT = process.env.PORT || 3000
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' })
-  res.end('Anti-Link Bot is active and running!')
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Web server successfully bound to port ${PORT}`)
-})
+  res.end('Anti-Link Bot active!')
+}).listen(PORT, '0.0.0.0', () => console.log(`✅ Port ${PORT}`))
 
-// 2. RETRIEVE PHONE NUMBER FROM ENVIRONMENT
-const PHONE_NUMBER = process.env.BOT_NUMBER 
+const PHONE_NUMBER = process.env.BOT_NUMBER
+const MAX_IMAGES_PER_DAY = 2
+
+const warns = {}
+const getToday = () => new Date().toISOString().split('T')[0]
+
+function getUserData(groupId, userId) {
+  if (!warns[groupId]) warns[groupId] = {}
+  if (!warns[groupId][userId]) {
+    warns[groupId][userId] = { linkWarns: 0, imageCount: 0, imageWarns: 0, date: getToday() }
+  }
+  if (warns[groupId][userId].date !== getToday()) {
+    warns[groupId][userId].imageCount = 0
+    warns[groupId][userId].imageWarns = 0
+    warns[groupId][userId].date = getToday()
+  }
+  return warns[groupId][userId]
+}
 
 async function startBot() {
   const { version } = await fetchLatestBaileysVersion()
-  console.log('Using WA version', version)
-  
   const { state, saveCreds } = await useMultiFileAuthState('auth')
-  
   const sock = makeWASocket({
     version,
     auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })) },
@@ -29,78 +39,81 @@ async function startBot() {
   })
   
   sock.ev.on('creds.update', saveCreds)
-  
-  // 3. WHATSAPP PAIRING CODE CONFIGURATION
   if (!sock.authState.creds.registered) {
-    if (!PHONE_NUMBER) {
-      console.error('❌ CRITICAL ERROR: "BOT_NUMBER" environment variable is missing on Render!')
-      process.exit(1)
-    }
-    
     setTimeout(async () => {
-      try {
-        console.log(`📲 Requesting pairing code for: ${PHONE_NUMBER}`)
-        const code = await sock.requestPairingCode(PHONE_NUMBER)
-        console.log(`\n========================================\n🔑 YOUR WHATSAPP PAIRING CODE: ${code}\n========================================\n`)
-      } catch (err) {
-        console.error('Failed to generate pairing code:', err)
-      }
+      const code = await sock.requestPairingCode(PHONE_NUMBER)
+      console.log(`\n🔑 CODE: ${code}\n`)
     }, 6000)
   }
-  
   sock.ev.on('connection.update', async (u) => {
-    if (u.connection === 'close') {
-      console.log('Closed:', u.lastDisconnect?.error?.output?.statusCode, u.lastDisconnect?.error?.message)
-      setTimeout(startBot, 5000)
-    }
-    if (u.connection === 'open') {
-      console.log('✅ Bot online and securely connected to WhatsApp!')
-    }
+    if (u.connection === 'close') setTimeout(startBot, 5000)
+    if (u.connection === 'open') console.log('✅ Bot online!')
   })
 
-  // 4. ANTI-LINK MONITORING LOGIC
   sock.ev.on('messages.upsert', async (chatUpdate) => {
-    try {
-      const msg = chatUpdate.messages
-      if (!msg || !msg.message || msg.key.fromMe) return 
+    for (const msg of chatUpdate.messages || []) {
+      try {
+        if (!msg.message || msg.key.fromMe) continue
+        const from = msg.key.remoteJid
+        if (!from?.endsWith('@g.us')) continue
 
-      const from = msg.key.remoteJid
-      if (!from.endsWith('@g.us')) return 
+        const sender = msg.key.participant
+        if (!sender) continue
 
-      const body = msg.message.conversation || 
-                   msg.message.extendedTextMessage?.text || 
-                   msg.message.imageMessage?.caption || 
-                   msg.message.videoMessage?.caption || ''
-
-      const linkRegex = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi
-      if (linkRegex.test(body)) {
-        const sender = msg.key.participant || msg.key.participantOwner || msg.participant
-        
         const groupMetadata = await sock.groupMetadata(from)
         const participants = groupMetadata.participants
-        
-        const botId = sock.user.id.split(':') + '@s.whatsapp.net'
-        const isSenderAdmin = participants.some(p => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin'))
-        const isBotAdmin = participants.some(p => p.id === botId && (p.admin === 'admin' || p.admin === 'superadmin'))
+        const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net'
+        const isSenderAdmin = participants.some(p => p.id === sender && p.admin)
+        const isBotAdmin = participants.some(p => (p.id === botJid || p.id === sock.user.id) && p.admin)
+        if (isSenderAdmin || !isBotAdmin) continue
 
-        if (!isSenderAdmin) {
-          if (!isBotAdmin) {
-            console.log(`⚠️ Link found in "${groupMetadata.subject}", but bot lacks admin rights.`)
-            return
-          }
+        const userData = getUserData(from, sender)
+        const mention = `@${sender.split('@')[0]}`
+        const body = msg.message.conversation || msg.message.extendedTextMessage?.text || msg.message.imageMessage?.caption || ""
 
+        // === LINK CHECK ===
+        const linkRegex = /(https?:\/\/|www\.|chat\.whatsapp\.com|t\.me|wa\.me)/i
+        if (linkRegex.test(body)) {
           await sock.sendMessage(from, { delete: msg.key })
-          await sock.groupParticipantsUpdate(from, [sender], 'remove')
-          await sock.sendMessage(from, { 
-            text: `🚫 @${sender.split('@')} has been removed automatically for link distribution.`, 
-            mentions: [sender] 
-          })
+          userData.linkWarns++
+
+          if (userData.linkWarns === 1) {
+            await sock.sendMessage(from, { text: `😡 ${mention} Links are NOT allowed!\n⚠️ Warning 1/3`, mentions: [sender] })
+          } else if (userData.linkWarns === 2) {
+            await sock.sendMessage(from, { text: `😡 ${mention} SECOND WARNING! One more link and you are OUT!\n⚠️ Warning 2/3`, mentions: [sender] })
+          } else {
+            await sock.sendMessage(from, { text: `🚫 ${mention} Removed for sending links 3 times!`, mentions: [sender] })
+            await sock.groupParticipantsUpdate(from, [sender], 'remove')
+            userData.linkWarns = 0
+          }
+          continue
         }
-      }
-    } catch (err) {
-      console.error('Anti-link runtime error:', err)
+
+        // === IMAGE CHECK - ONLY 2 PER DAY ===
+        if (msg.message.imageMessage) {
+          userData.imageCount++
+          
+          if (userData.imageCount > MAX_IMAGES_PER_DAY) {
+            await sock.sendMessage(from, { delete: msg.key })
+            userData.imageWarns++
+
+            if (userData.imageWarns === 1) {
+              await sock.sendMessage(from, { text: `⚠️ ${mention} You already sent 2 images today! Only 2 images allowed per day.\nThis image deleted. Warning 1/2`, mentions: [sender] })
+            } else if (userData.imageWarns === 2) {
+              await sock.sendMessage(from, { text: `😡 ${mention} FINAL WARNING! You sent ${userData.imageCount} images today! Max is 2!\nNext image = KICK!\nWarning 2/2`, mentions: [sender] })
+            } else {
+              await sock.sendMessage(from, { text: `🚫 ${mention} Removed for spamming images! You sent ${userData.imageCount} images (max 2 per day)`, mentions: [sender] })
+              await sock.groupParticipantsUpdate(from, [sender], 'remove')
+              userData.imageCount = 0
+              userData.imageWarns = 0
+            }
+          } else {
+            console.log(`✅ Image ${userData.imageCount}/2 allowed from ${sender}`)
+          }
+        }
+
+      } catch (e) { console.error(e) }
     }
   })
 }
-
 startBot()
